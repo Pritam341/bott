@@ -1,85 +1,69 @@
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ConversationHandler,
-    ContextTypes,
-    filters,
-)
+from flask import Flask, request
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Dispatcher, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler
+import os
 
-# -------- Configuration --------
-TOKEN = "7769667614:AAGP7ei6UvquxrjiwBJZ0q7TpGn1aC7JaxI"
+# ---- Configuration ----
+TOKEN = '7769667614:AAGP7ei6UvquxrjiwBJZ0q7TpGn1aC7JaxI'
 CHANNEL_ID = -1002180406156
 
-# -------- States --------
+# ---- Flask Setup ----
+app = Flask(__name__)
+bot = Bot(token=TOKEN)
+dispatcher = Dispatcher(bot=bot, update_queue=None, workers=0)
+
+# ---- States ----
 DETAILS, LINK = range(2)
 
-# -------- Logging --------
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# ---- Bot Handlers ----
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("👋 Welcome! Use /post to create a job post.")
 
-# -------- Handlers --------
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Welcome to EURMjobs Bot! Use /post to send a job.")
-
-async def post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✍️ Send the job post details (company, role, etc.)")
+def post(update: Update, context: CallbackContext):
+    update.message.reply_text("✍️ Send job details (company, role, etc.)")
     return DETAILS
 
-async def get_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def get_details(update: Update, context: CallbackContext):
     context.user_data["details"] = update.message.text
-    await update.message.reply_text("🔗 Now send the apply link.")
+    update.message.reply_text("🔗 Send the apply link.")
     return LINK
 
-async def get_link_and_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def get_link(update: Update, context: CallbackContext):
     link = update.message.text.strip()
     details = context.user_data.get("details", "")
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📧 Apply Now", url=link)]
-    ])
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("📧 Apply Now", url=link)]])
 
-    try:
-        await context.bot.send_message(
-            chat_id=CHANNEL_ID,
-            text=details,
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
-        await update.message.reply_text("✅ Job posted successfully!")
-    except Exception as e:
-        logger.error("Failed to post job: %s", e)
-        await update.message.reply_text("❌ Failed to post the job.")
-
-    return ConversationHandler.END
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚫 Job posting cancelled.")
-    return ConversationHandler.END
-
-# -------- Main --------
-
-def main():
-    app = Application.builder().token(TOKEN).build()
-
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("post", post)],
-        states={
-            DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_details)],
-            LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_link_and_post)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
+    bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=details,
+        reply_markup=keyboard,
+        parse_mode="Markdown"
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv_handler)
+    update.message.reply_text("✅ Job posted successfully!")
+    return ConversationHandler.END
 
-    app.run_polling()
+# ---- Conversation Handler ----
+conv_handler = ConversationHandler(
+    entry_points=[CommandHandler("post", post)],
+    states={
+        DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_details)],
+        LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_link)],
+    },
+    fallbacks=[],
+)
 
-if __name__ == "__main__":
-    main()
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(conv_handler)
+
+# ---- Flask Routes ----
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
+    return "ok"
+
+@app.route("/", methods=["GET"])
+def home():
+    return "EURMjobs Bot is running!"
